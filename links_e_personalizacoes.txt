@@ -1,0 +1,244 @@
+**Paper: Padronização e Boas Práticas para JSONs no Nordy (ComfyUI Online)**
+
+---
+
+### 🔍 OBJETIVO
+
+Fornecer um guia definitivo para criação, correção e validação de arquivos JSON compatíveis com a plataforma Nordy (ComfyUI Online), assegurando o carregamento correto dos links entre nós e a funcionalidade do fluxo.
+
+---
+
+### 🔧 ESTRUTURA BÁSICA OBRIGATÓRIA
+
+Todo arquivo JSON deve conter os seguintes campos principais:
+
+```json
+{
+  "last_node_id": <int>,
+  "last_link_id": <int>,
+  "nodes": [ ... ],
+  "links": [ ... ],
+  "groups": [ ... ],
+  "version": 0.4
+}
+```
+
+---
+
+### ⚠️ FORMATO CORRETO DOS LINKS (OBRIGATÓRIO)
+
+Cada link **deve ser um array com 6 elementos**, na seguinte ordem:
+
+```json
+[ <id>, <source_id>, <source_slot>, <target_id>, <target_slot>, <type> ]
+```
+
+**Exemplo válido:**
+
+```json
+[137, 54, 0, 47, 0, "MODEL"]
+```
+
+Evite usar objetos com chaves nomeadas (ex: `{ id: 137, source_id: 54, ... }`) pois causam erro de validação `zod schema`.
+
+---
+
+### 🔹 CONFIGURAÇÃO DE INPUTS E OUTPUTS (DENTRO DE CADA NODE)
+
+#### Dentro de cada node:
+
+* `inputs` deve conter:
+
+  ```json
+  {
+    "name": "model",
+    "type": "MODEL",
+    "link": 137,
+    "slot_index": 0
+  }
+  ```
+* `outputs` deve conter:
+
+  ```json
+  {
+    "name": "GUIDER",
+    "type": "GUIDER",
+    "links": [143],
+    "slot_index": 0
+  }
+  ```
+
+> ❌ Erros comuns:
+>
+> * `"link": null` (deve ser o ID do link ou omitido)
+> * `"links": []` (deve conter o ID do link correto se houver)
+
+❌ 1. Links não compatíveis com o tipo esperado no slot
+Os links devem conectar tipos compatíveis de entrada e saída entre os nodes. Por exemplo:
+
+
+[2, 2, 0, 17, 0, "LATENT"]
+Erro:
+
+O node id: 2 é um LoadImage, que só gera IMAGE, e não LATENT.
+
+O link está tentando conectar uma IMAGE como se fosse LATENT, causando erro de "type mismatch" ou zod validation.
+
+❌ 2. Links de output duplicados em slot único
+Exemplo:
+
+[15, 15, 0, 70, 0, "IMAGE"]
+[16, 16, 0, 71, 0, "IMAGE"]
+Ambos conectam a mesma saída (ImageUpscaleWithModel, id: 61) ao slot 0 de dois nós diferentes. Isso não é um erro se o nó de saída suporta múltiplos destinos, mas precisa ser compatível com múltiplos links no campo outputs.links. No entanto:
+
+Em alguns casos, isso foi feito sem atualizar o campo outputs.links corretamente.
+
+Se links no output do node não inclui todos os IDs dos links, isso fere o schema zod.
+
+❌ 3. Links desconectados ou órfãos
+Exemplo:
+
+[6, 6, 0, 32, 1, "CONDITIONING"],
+[7, 7, 0, 32, 2, "CONDITIONING"]
+O node 6 e o node 7 são ambos LoadImage, mas estão sendo conectados como se fossem CONDITIONING, o que gera inconsistência:
+
+Saídas de IMAGE não podem alimentar entradas que esperam CONDITIONING, como ConditioningCombine.
+
+✅ Formato dos links está tecnicamente correto:
+Os links seguem o formato:
+
+
+[ <id>, <source_id>, <source_slot>, <target_id>, <target_slot>, <type> ]
+Mas o tipo declarado no sexto elemento ("type") não bate com o tipo real do node output, causando erro de validação.
+
+⚠️ Outros pontos importantes:
+O fluxo tem várias conexões feitas com LoadImage tentando alimentar inputs de tipos não compatíveis como LATENT, CONDITIONING, etc.
+
+Isso pode causar "nothing shows up no canvas", pois o Nordy aborta a importação silenciosamente quando o schema está corrompido.
+
+Alguns links referenciam outputs não definidos corretamente nos outputs.links.
+
+✅ Como corrigir:
+Confirme o tipo de cada slot no input e output do node antes de fazer o link.
+
+Use apenas tipos compatíveis:
+
+IMAGE → IMAGE
+
+CONDITIONING → CONDITIONING
+
+MODEL → MODEL
+
+Atualize os campos outputs.links e inputs.link com o ID correto de cada link.
+
+Se necessário, adicione nodes intermediários como:
+
+VAEEncode/Decode para converter IMAGE ↔ LATENT
+
+CLIPTextEncode para gerar CONDITIONING a partir de string
+
+---
+
+### 🌐 DICAS DE ORGANIZAÇÃO VISUAL
+
+#### 🖌️ Atributos de Estilo e Aparência:
+
+* `pos`: coordenadas do nó (ex: `[935.5, 879.1]`)
+* `size`: largura e altura do bloco (ex: `[340.2, 98]`)
+* `title`: nome personalizado visível no topo do node
+* `color`: cor da borda do nó
+* `bgcolor`: cor do fundo do nó
+* `shape`: estilo visual do nó (valores inteiros predefinidos)
+
+```json
+"title": "Upload da Imagem da Menina",
+"color": "#322",
+"bgcolor": "#533"
+```
+
+#### 📦 Exemplo visual de grupos:
+
+```json
+"groups": [
+  {
+    "id": 1,
+    "title": "Grupo de Teste",
+    "bounding": [212.78, 510.11, 544.26, 565.90],
+    "color": "#3f789e",
+    "font_size": 24,
+    "flags": {}
+  },
+  {
+    "id": 2,
+    "title": "Grupo de Teste 2",
+    "bounding": [822.18, 509.69, 544.37, 562.25],
+    "color": "#a1309b",
+    "font_size": 36,
+    "flags": {"pinned": true}
+  }
+]
+```
+
+Verificação dos Links
+
+podem existir e devem ser corrigidos:
+
+Nódulos com conexões ausentes visualmente (não renderizadas por erro de posição)
+
+Pins obrigatórios sem conexão (sem link, mas deveriam estar conectados)
+
+Incompatibilidades invisíveis (como modelos esperados não carregados corretamente, ou tipo "LIST" vs "SINGLE")
+
+✅ Detectar pins obrigatórios não conectados
+✅ Verificar se há links com nodes inválidos ou IDs ausentes
+✅ Analisar quantidade de conexões visíveis por slot vs esperadas
+
+
+
+'''''''
+
+Esses grupos ajudam a organizar visualmente os fluxos, facilitando a leitura e a manutenção.
+
+---
+
+### 🚫 ERROS COMUNS E COMO EVITAR
+
+| Erro                                         | Causa                                     | Correção                                                                            |
+| -------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------- |
+| `Expected array, received object`            | Links no formato objeto                   | Usar arrays no formato `[id, source_id, source_slot, target_id, target_slot, type]` |
+| Links visíveis na interface mas não carregam | Faltam referências nos `inputs`/`outputs` | Corrigir `link` e `links` dentro de cada nó                                         |
+| `null` ou `[]` em links                      | JSON incompleto ou corrompido             | Usar IDs válidos e referenciar corretamente                                         |
+
+---
+
+### ✅ BOA PRÁTICA: VERIFICAÇÃO EM DUAS CAMADAS
+
+1. Verificar se todos os links estão listados na seção principal `"links"`
+2. Garantir que os `inputs.link` e `outputs.links` dos `nodes` correspondam aos mesmos IDs
+
+---
+### 🔗 Tipos de Conexão Esperados no Nordy
+
+- CLIPTextEncode → ConditioningCombine: tipo CONDITIONING
+- CheckpointLoader → KSampler: tipo MODEL
+- ConditioningCombine → KSampler: tipo CONDITIONING
+- KSampler → ProPostApplyLUT: tipo IMAGE
+- ProPostApplyLUT → SaveImage: tipo IMAGE
+
+💡 Todos os links devem ser inseridos com o tipo exato (não usar "DATA")
+----
+
+### 🏋️ CONCLUSÃO
+
+Seguir este padrão evita erros de carregamento, bugs de conexão invisível e problemas de execução no Nordy. Um fluxo bem formatado acelera o processo de edição e permite reutilização segura.
+
+Próximo passo: implementar validador automático e adaptador para JSONs antigos com base neste paper.
+
+---
+
+✏️ Atualizações futuras incluirão:
+
+* Templates de fluxo mínimo funcional
+* Conversores automáticos para JSONs quebrados
+* Extensões visuais e exemplos ilustrados
+* Tabela de cores e formas para organização estratégica dos nós
